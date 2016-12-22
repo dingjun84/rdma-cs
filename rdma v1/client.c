@@ -77,12 +77,12 @@ int main(int argc, char **argv){
 		} else if(opcode == READ){
 			printf("Server memory region is %u bytes long. "
 				"Choosing a relative point (0 - %u) to start reading from, followed by "
-				"how many bytes you wish to read.\n> ", (unsigned int)server_mr_length,
-				(unsigned int)server_mr_length-1);
+				"how many bytes you wish to read (0-%u).\n> ", (unsigned int)server_mr_length,
+				(unsigned int)server_mr_length-1, REGION_LENGTH);
 			scanf("%llu", &offset);fgetc(stdin);
 			printf("> ");
 			scanf("%llu", &length);fgetc(stdin);
-			if(offset+length > server_mr_length){
+			if(offset+length > server_mr_length || length > REGION_LENGTH){
 				printf("Invalid offset and/or length.\n");
 				continue;
 			}
