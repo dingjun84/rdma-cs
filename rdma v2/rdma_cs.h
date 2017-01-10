@@ -7,6 +7,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <semaphore.h>
 
 #include <infiniband/verbs.h>
 #include <infiniband/arch.h>
@@ -19,7 +23,8 @@
 #define MAX_RECV_SGE	1
 #define MAX_INLINE_DATA	256
 #define REGION_LENGTH	512
-#define SERVER_MR_SIZE	4096
+#define SERVER_MR_SIZE	1024
+#define SERVER_LOG_PATH	"./server_logs/"
 
 enum completion_type {
 	RECV,
@@ -32,13 +37,13 @@ enum client_opcodes {
 	READ
 };
 
-uint32_t get_completion(struct rdma_cm_id *, enum completion_type, uint8_t);
-struct rdma_cm_id *cm_event(struct rdma_event_channel *, enum rdma_cm_event_type);
-int swap_info(struct rdma_cm_id *, struct ibv_mr *, uint32_t *, uint64_t *, size_t *);
+uint32_t get_completion(struct rdma_cm_id *, enum completion_type, uint8_t, FILE *);
+struct rdma_cm_id *cm_event(struct rdma_event_channel *, enum rdma_cm_event_type, FILE *, sem_t *);
+int swap_info(struct rdma_cm_id *, struct ibv_mr *, uint32_t *, uint64_t *, size_t *, FILE *);
 int obliterate(struct rdma_cm_id *,struct rdma_cm_id *, struct ibv_mr *,
-	struct rdma_event_channel *);
-void stop_it(char *, int);
-void rdma_recv(struct rdma_cm_id *, struct ibv_mr *);
-void rdma_send_op(struct rdma_cm_id *, uint8_t);
-void rdma_write_inline(struct rdma_cm_id *, void *, uint64_t, uint32_t);
+	struct rdma_event_channel *, FILE *);
+void stop_it(char *, int, FILE *);
+void rdma_recv(struct rdma_cm_id *, struct ibv_mr *, FILE *);
+void rdma_send_op(struct rdma_cm_id *, uint8_t, FILE *);
+void rdma_write_inline(struct rdma_cm_id *, void *, uint64_t, uint32_t, FILE *);
 #endif

@@ -12,7 +12,7 @@ client: rdma_cs.c client.c
 	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS)
 
 server: rdma_cs.c server.c
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS) -lpthread
 
 backup: 
 	cp --backup=t server.c server.c.backup
@@ -24,3 +24,6 @@ clean:
 
 clear_backups:
 	rm *.c.backup.*
+
+clear_logs:
+	rm -f server_logs/*
