@@ -15,23 +15,23 @@ int main(int argc, char **argv){
 	// Create the event channel
 	struct rdma_event_channel *event_channel = rdma_create_event_channel();
 	if(event_channel == NULL)
-		stop_it("rdma_create_event_channel()", errno);
+		stop_it("rdma_create_event_channel()", errno, stderr);
 	// Create the ID
 	struct rdma_cm_id *cm_id;
 	if(rdma_create_id(event_channel, &cm_id, "qwerty", RDMA_PS_TCP))
-		stop_it("rdma_create_id()", errno);
+		stop_it("rdma_create_id()", errno, stderr);
 	// Connect to the server
 	connect_four(cm_id, event_channel, ip, port);
 	// Register memory region
 	struct ibv_mr *mr = ibv_reg_mr(cm_id->qp->pd, malloc(REGION_LENGTH), REGION_LENGTH,
 	 IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
 	if(mr == NULL)
-		stop_it("ibv_reg_mr()", errno);
+		stop_it("ibv_reg_mr()", errno, stderr);
 	// Exchange addresses and rkeys with the server
 	uint32_t rkey;
 	uint64_t remote_addr;
 	size_t server_mr_length;
-	swap_info(cm_id, mr, &rkey, &remote_addr, &server_mr_length);
+	swap_info(cm_id, mr, &rkey, &remote_addr, &server_mr_length, stdout);
 	// The real good
 	void *buffer = malloc(MAX_INLINE_DATA);
 	uint8_t opcode;
@@ -51,8 +51,8 @@ int main(int argc, char **argv){
 		while(fgetc(stdin) != '\n')
 			fgetc(stdin);
 		if(opcode == DISCONNECT){
-			rdma_send_op(cm_id, opcode);
-			get_completion(cm_id, SEND, 0);
+			rdma_send_op(cm_id, opcode, stdout);
+			get_completion(cm_id, SEND, 0, stdout);
 			break;
 		} else if(opcode == WRITE){
 			printf("Server memory region is %u bytes long. "
@@ -63,33 +63,33 @@ int main(int argc, char **argv){
 				printf("Invalid offset.\n");
 				continue;
 			}
-			printf("Enter the data to be sent to the server. Max length is %u bytes.\n",
+			printf("Enter the data to be sent to the server. Max length is %u bytes.\n> ",
 				MAX_INLINE_DATA);
 			memset(buffer, 0, MAX_INLINE_DATA);
 			if(fgets(buffer, MAX_INLINE_DATA, stdin) == NULL){
 				printf("Unknow error occured.");
-				rdma_send_op(cm_id, DISCONNECT);
-				get_completion(cm_id, SEND, 0);
+				rdma_send_op(cm_id, DISCONNECT, stdout);
+				get_completion(cm_id, SEND, 0, stdout);
 				break;
 			}
-			rdma_write_inline(cm_id, buffer, remote_addr+offset, rkey);
-			get_completion(cm_id, SEND, 1);
+			rdma_write_inline(cm_id, buffer, remote_addr+offset, rkey, stdout);
+			get_completion(cm_id, SEND, 1, stdout);
 		} else if(opcode == READ){
 			printf("Server memory region is %u bytes long. "
 				"Choosing a relative point (0 - %u) to start reading from, followed by "
-				"how many bytes you wish to read.\n> ", (unsigned int)server_mr_length,
-				(unsigned int)server_mr_length-1);
+				"how many bytes you wish to read (0-%u).\n> ", (unsigned int)server_mr_length,
+				(unsigned int)server_mr_length-1, REGION_LENGTH);
 			scanf("%llu", &offset);fgetc(stdin);
 			printf("> ");
 			scanf("%llu", &length);fgetc(stdin);
-			if(offset+length > server_mr_length){
+			if(offset+length > server_mr_length || length > REGION_LENGTH){
 				printf("Invalid offset and/or length.\n");
 				continue;
 			}
 			if(rdma_post_read(cm_id, "qwerty", mr->addr, length, mr, IBV_SEND_SIGNALED,
 				remote_addr + offset, rkey))
-				stop_it("rdma_post_read()", errno);
-			get_completion(cm_id, SEND, 1);
+				stop_it("rdma_post_read()", errno, stderr);
+			get_completion(cm_id, SEND, 1, stdout);
 			// Print data in hex 1 byte at a time
 			printf("Data: ");
 			byte = (unsigned char *)mr->addr;
@@ -102,7 +102,7 @@ int main(int argc, char **argv){
 
 	}
 	// Disconnect
-	obliterate(cm_id, NULL, mr, event_channel);
+	obliterate(cm_id, NULL, mr, event_channel, stdout);
 	return 0;
 }
 
@@ -115,9 +115,9 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	inet_aton(ip, &(sin.sin_addr));
 	// Resolve the server's address
 	if(rdma_resolve_addr(cm_id, NULL, (struct sockaddr *)&sin, 10000))
-		stop_it("rdma_resolve_addr()", errno);
+		stop_it("rdma_resolve_addr()", errno, stderr);
 	// Wait for the address to resolve
-	cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED);
+	cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, stdout, NULL);
 	// Create queue pair
 	struct ibv_qp_init_attr *init_attr = malloc(sizeof(*init_attr));
 	memset(init_attr, 0, sizeof(*init_attr));
@@ -128,12 +128,12 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	init_attr->cap.max_recv_sge = MAX_RECV_SGE;
 	init_attr->cap.max_inline_data = MAX_INLINE_DATA;
 	if(rdma_create_qp(cm_id, NULL, init_attr))
-		stop_it("rdma_create_qp()", errno);
+		stop_it("rdma_create_qp()", errno, stderr);
 	// Resolve the route to the server
 	if(rdma_resolve_route(cm_id, 10000))
-		stop_it("rdma_resolve_route()", errno);
+		stop_it("rdma_resolve_route()", errno, stderr);
 	// Wait for the route to resolve
-	cm_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED);
+	cm_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, stdout, NULL);
 	// Send a connection request to the server
 	struct rdma_conn_param *conn_params = malloc(sizeof(*conn_params));
 	printf("Conencting...\n");
@@ -143,8 +143,8 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	conn_params->responder_resources = 10;
 	conn_params->initiator_depth = 10;
 	if(rdma_connect(cm_id, conn_params))
-		stop_it("rdma_connect()", errno);
+		stop_it("rdma_connect()", errno, stderr);
 	// Wait for the server to accept the connection
-	cm_event(ec, RDMA_CM_EVENT_ESTABLISHED);
+	cm_event(ec, RDMA_CM_EVENT_ESTABLISHED, stdout, NULL);
 	return 0;
 }
