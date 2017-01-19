@@ -8,7 +8,7 @@ void stop_it(char *reason, int error, FILE *file){
 
 // Process a cm event and return the the rdma_cm_id in the event of a connection request
 struct rdma_cm_id *cm_event(struct rdma_event_channel * ec,
- enum rdma_cm_event_type expected, FILE *file, sem_t *semaphore){
+ enum rdma_cm_event_type expected, FILE *file){
 	struct rdma_cm_event *event;
 	struct rdma_cm_id *id;
 	if(rdma_get_cm_event(ec, &event))
@@ -40,8 +40,6 @@ struct rdma_cm_id *cm_event(struct rdma_event_channel * ec,
 			stop_it("rdma_accept()", errno, file);
 		fprintf(file, "Accepted connection request from remote QP 0x%x.\n",
 			(unsigned int)event->param.conn.qp_num);
-		if(semaphore != NULL)
-			sem_wait(semaphore);
 	}
 	if(rdma_ack_cm_event(event))
 		stop_it("rdma_ack_cm_event()", errno, file);
@@ -112,19 +110,23 @@ uint32_t get_completion(struct rdma_cm_id *cm_id, enum completion_type type, uin
 				fprintf(file, "Operation %d", wc.opcode);
 				break;
 		}
-		if(!wc.status){
-			fprintf(file, "completed successfully!\n");
-			if(wc.wc_flags & IBV_WC_WITH_IMM && wc.opcode != IBV_WC_SEND){
-				fprintf(file, "Immediate data: 0x%x\n", ntohl(wc.imm_data));
-				data = ntohl(wc.imm_data);
-			}
-			if(wc.opcode == IBV_WC_RECV){
-				fprintf(file, "%u bytes received.\n", wc.byte_len);
-			}
-		} else {
-			fprintf(file, "failed with error value %d.\n", wc.status);
-		}
 	}
+	if(!wc.status){
+		if(print)
+			fprintf(file, "completed successfully!\n");
+		if(wc.wc_flags & IBV_WC_WITH_IMM && wc.opcode != IBV_WC_SEND){
+			if(print)
+				fprintf(file, "Immediate data: 0x%x\n", ntohl(wc.imm_data));
+			data = ntohl(wc.imm_data);
+		}
+		if(wc.opcode == IBV_WC_RECV && print){
+			fprintf(file, "%u bytes received.\n", wc.byte_len);
+		}
+	} else {
+		if(print)
+			fprintf(file, "failed with error value %d.\n", wc.status);
+	}
+	
 	return data;
 }
 
@@ -136,11 +138,11 @@ int obliterate(struct rdma_cm_id *mine,struct rdma_cm_id *client, struct ibv_mr 
 	if(rdma_dereg_mr(mr))
 		stop_it("rdma_dereg_mr()", errno, file);
 	if(client != NULL)
-		cm_event(ec, RDMA_CM_EVENT_DISCONNECTED, file, NULL);
+		cm_event(ec, RDMA_CM_EVENT_DISCONNECTED, file);
 	if(rdma_disconnect(id))
 		stop_it("rdma_disconnect()", errno, file);
 	if(client == NULL)
-		cm_event(ec, RDMA_CM_EVENT_DISCONNECTED, file, NULL);
+		cm_event(ec, RDMA_CM_EVENT_DISCONNECTED, file);
 	rdma_destroy_qp(id);
 	if(client != NULL){
 		if(rdma_destroy_id(client))
