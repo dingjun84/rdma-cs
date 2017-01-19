@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <semaphore.h>
+#include <pthread.h>
 
 #include <infiniband/verbs.h>
 #include <infiniband/arch.h>
@@ -38,7 +39,7 @@ enum client_opcodes {
 };
 
 uint32_t get_completion(struct rdma_cm_id *, enum completion_type, uint8_t, FILE *);
-struct rdma_cm_id *cm_event(struct rdma_event_channel *, enum rdma_cm_event_type, FILE *, sem_t *);
+struct rdma_cm_id *cm_event(struct rdma_event_channel *, enum rdma_cm_event_type, FILE *);
 int swap_info(struct rdma_cm_id *, struct ibv_mr *, uint32_t *, uint64_t *, size_t *, FILE *);
 int obliterate(struct rdma_cm_id *,struct rdma_cm_id *, struct ibv_mr *,
 	struct rdma_event_channel *, FILE *);

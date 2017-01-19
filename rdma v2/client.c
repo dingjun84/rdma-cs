@@ -1,8 +1,12 @@
 #include "rdma_cs.h"
 
-
+struct listen_info {
+	struct ibv_mr *mr;
+	struct rdma_cm_id *id;
+};
 
 int connect_four(struct rdma_cm_id *, struct rdma_event_channel *, char *, short int);
+void *server_com(void *);
 
 int main(int argc, char **argv){
 	// Get server address and port from arguments
@@ -39,17 +43,26 @@ int main(int argc, char **argv){
 	unsigned long long offset;
 	int i;
 	unsigned char *byte;
+	// Make the listener thread before the real good starts
+	struct listen_info info;
+	info.mr = mr;
+	info.id = cm_id;
+	pthread_t listen_thread;
+	if(pthread_create(&listen_thread, NULL, server_com, &info)){
+			stop_it("pthread_create()", errno, stderr);
+		}
 	while(1){
 		printf("---------------\n"
 			"| RDMA client |\n"
 			"---------------\n"
-			"1) Disconnect\n"
-			"2) Write\n"
-			"3) Read\n"
+			"1) Disconnect |\n"
+			"2) Write      |\n"
+			"3) Read       |\n"
 			"> ");
 		opcode = fgetc(stdin)%48;
 		while(fgetc(stdin) != '\n')
 			fgetc(stdin);
+		printf("---------------\n");
 		if(opcode == DISCONNECT){
 			rdma_send_op(cm_id, opcode, stdout);
 			get_completion(cm_id, SEND, 0, stdout);
@@ -117,7 +130,7 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	if(rdma_resolve_addr(cm_id, NULL, (struct sockaddr *)&sin, 10000))
 		stop_it("rdma_resolve_addr()", errno, stderr);
 	// Wait for the address to resolve
-	cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, stdout, NULL);
+	cm_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, stdout);
 	// Create queue pair
 	struct ibv_qp_init_attr *init_attr = malloc(sizeof(*init_attr));
 	memset(init_attr, 0, sizeof(*init_attr));
@@ -133,10 +146,10 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	if(rdma_resolve_route(cm_id, 10000))
 		stop_it("rdma_resolve_route()", errno, stderr);
 	// Wait for the route to resolve
-	cm_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, stdout, NULL);
+	cm_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, stdout);
 	// Send a connection request to the server
 	struct rdma_conn_param *conn_params = malloc(sizeof(*conn_params));
-	printf("Conencting...\n");
+	printf("Connecting...\n");
 	memset(conn_params, 0, sizeof(*conn_params));
 	conn_params->retry_count = 8;
 	conn_params->rnr_retry_count = 8;
@@ -145,6 +158,28 @@ int connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char *
 	if(rdma_connect(cm_id, conn_params))
 		stop_it("rdma_connect()", errno, stderr);
 	// Wait for the server to accept the connection
-	cm_event(ec, RDMA_CM_EVENT_ESTABLISHED, stdout, NULL);
+	cm_event(ec, RDMA_CM_EVENT_ESTABLISHED, stdout);
 	return 0;
+}
+
+void *server_com(void *info){
+	struct listen_info *linfo = info;
+	struct rdma_cm_id *cm_id = linfo->id;
+	struct ibv_mr *mr = linfo->mr;
+	int opcode;
+	while(1){
+		rdma_recv(cm_id, mr, stdout);
+		opcode = get_completion(cm_id, RECV, 0, stderr);
+		if(opcode == DISCONNECT){
+			fprintf(stdout, "\nServer issued a disconnect request.\n");
+			rdma_send_op(cm_id, opcode, stdout);
+			get_completion(cm_id, SEND, 0, stdout);
+			break;
+		} else if (opcode == 0){
+			return NULL;
+		}
+	}
+	obliterate(cm_id, NULL, mr, cm_id->channel, stdout);
+	exit(0);
+	return NULL;
 }
