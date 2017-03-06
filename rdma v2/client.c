@@ -49,25 +49,32 @@ int main(int argc, char **argv){
 	info.id = cm_id;
 	pthread_t listen_thread;
 	if(pthread_create(&listen_thread, NULL, server_com, &info)){
-			stop_it("pthread_create()", errno, stderr);
-		}
+		stop_it("pthread_create()", errno, stderr);
+	}
 	while(1){
-		printf("---------------\n"
-			"| RDMA client |\n"
-			"---------------\n"
-			"1) Disconnect |\n"
-			"2) Write      |\n"
-			"3) Read       |\n"
+		printf("----------------------\n"
+			"| RDMA client        |\n"
+			"----------------------\n"
+			"1) Disconnect        |\n"
+			"2) Write inline      |\n"
+			"3) Write             |\n"
+			"4) Read              |\n"
+			"5) Open Server MR    |\n"
+			"6) Close server MR   |\n"
+			"7) View open MRs     |\n"
+			"8) Request another MR|\n"
 			"> ");
 		opcode = fgetc(stdin)%48;
 		while(fgetc(stdin) != '\n')
 			fgetc(stdin);
-		printf("---------------\n");
+		printf("----------------------\n");
 		if(opcode == DISCONNECT){
+			// Send disconnect signal to server
 			rdma_send_op(cm_id, opcode, stdout);
 			get_completion(cm_id, SEND, 0, stdout);
 			break;
-		} else if(opcode == WRITE){
+		} else if(opcode == WRITE_INLINE){
+			// RDMA write inline
 			printf("Server memory region is %u bytes long. "
 				"Choosing a relative point (0 - %u) to start writing to.\n> ",
 				(unsigned int)server_mr_length, (unsigned int)server_mr_length-MAX_INLINE_DATA);
@@ -87,7 +94,37 @@ int main(int argc, char **argv){
 			}
 			rdma_write_inline(cm_id, buffer, remote_addr+offset, rkey, stdout);
 			get_completion(cm_id, SEND, 1, stdout);
+		} else if(opcode == WRITE){
+			// RDMA write
+			printf("Server memory region is %u bytes long. "
+				"Choosing a relative point (0 - %u) to start writing to.\n> ",
+				(unsigned int)server_mr_length, (unsigned int)server_mr_length - 1);
+			scanf("%llu", &offset);fgetc(stdin);
+			if(offset >= server_mr_length){
+				printf("Invalid offset.\n");
+				continue;
+			}
+			printf("Enter the data to be sent to the server. Max length is %llu bytes.\n> ",
+				server_mr_length - offset);
+			if(fgets(mr->addr, MAX_INLINE_DATA, stdin) == NULL){
+				printf("Unknow error occured.");
+				rdma_send_op(cm_id, DISCONNECT, stdout);
+				get_completion(cm_id, SEND, 0, stdout);
+				break;
+			}
+			rdma_post_write(cm_id, "qwerty", mr->addr, server_mr_length-offset > MAX_INLINE_DATA ? MAX_INLINE_DATA : server_mr_length-offset,
+				mr, IBV_SEND_SIGNALED, remote_addr+offset, rkey);
+			get_completion(cm_id, SEND, 1, stdout);
+		} else if(opcode == OPEN_MR){
+			rdma_send_op(cm_id, opcode, stdout);
+		} else if(opcode == CLOSE_MR){
+			rdma_send_op(cm_id, opcode, stdout);
+		} else if(opcode == REQUEST_MR){
+
+		} else if(opcode == REQUEST_PAGE){
+			
 		} else if(opcode == READ){
+			// RDMA read
 			printf("Server memory region is %u bytes long. "
 				"Choosing a relative point (0 - %u) to start reading from, followed by "
 				"how many bytes you wish to read (0-%u).\n> ", (unsigned int)server_mr_length,
@@ -168,9 +205,11 @@ void *server_com(void *info){
 	struct ibv_mr *mr = linfo->mr;
 	int opcode;
 	while(1){
+		// Wait for signal from the server
 		rdma_recv(cm_id, mr, stdout);
 		opcode = get_completion(cm_id, RECV, 0, stderr);
 		if(opcode == DISCONNECT){
+			// Send a disconnect signal to the server
 			fprintf(stdout, "\nServer issued a disconnect request.\n");
 			rdma_send_op(cm_id, opcode, stdout);
 			get_completion(cm_id, SEND, 0, stdout);
