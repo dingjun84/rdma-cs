@@ -34,8 +34,13 @@ enum completion_type {
 
 enum client_opcodes {
 	DISCONNECT = 1,
+	WRITE_INLINE,
 	WRITE,
-	READ
+	READ,
+	OPEN_MR,
+	CLOSE_MR,
+	REQUEST_MR,
+	REQUEST_PAGE
 };
 
 uint32_t get_completion(struct rdma_cm_id *, enum completion_type, uint8_t, FILE *);
