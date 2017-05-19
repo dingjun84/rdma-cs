@@ -25,19 +25,19 @@
 /**
  * @brief The max amount of send type work requests
  */
-#define MAX_SEND_WR		4
+#define MAX_SEND_WR		8
 /**
  * @brief The max amount of send type scatter/gather elements
  */
-#define MAX_SEND_SGE	1
+#define MAX_SEND_SGE	4
 /**
  * @brief The max amount of receive type work requests
  */
-#define MAX_RECV_WR		4
+#define MAX_RECV_WR		8
 /**
  * @brief The max amount of receive type scatter/gather elements
  */
-#define MAX_RECV_SGE	1
+#define MAX_RECV_SGE	4
 /**
  * @brief The max amount (in bytes) that can be written inline
  */
@@ -73,9 +73,8 @@ enum client_opcodes {
 	READ,			/**< Perform and rdma read */
 	OPEN_MR,		/**< Open a memory region on the server */
 	CLOSE_MR,		/**< Close a memory region on the server */
-	REQUEST_MR,		/**< Request a list of all open memory regions from the server */
-	REQUEST_PAGE,	/**< Unused */
-	SEMA_POST		/**< Used to free the main thread of the client if it is waiting for the server */
+	ADD_CLIENT = 10,/**< Used to add an open memory regions to clients' lists */
+	REMOVE_CLIENT	/**< Used to remove open memory regions from clients' lists */
 };
 
 /**

@@ -66,7 +66,8 @@ void add_client(struct cnode);
 void remove_thread(pthread_t);
 void remove_client(pthread_t);
 void set_status(pthread_t, enum client_status);
-void send_open_clients(struct rdma_cm_id *);
+void remote_remove(pthread_t);
+void remote_add(pthread_t);
 
 int main(int argc, char **argv){
 	// Create log directory
@@ -100,7 +101,6 @@ int main(int argc, char **argv){
 		stop_it("rdma_create_id()", errno, log_p);
 	// Bind to the port
 	binding_of_isaac(cm_id, port);
-	// Store required info that the listener needs
 	// Store the pthread's id and purpose
 	tlist_head = malloc(sizeof(struct pnode));
 	memset(tlist_head, 0, sizeof(struct pnode));
@@ -205,12 +205,10 @@ int main(int argc, char **argv){
 			break;
 		}
 	}
-	
 	fclose(log_p);
 	return 0;
 }
 
-// Bind to the specified port. If zero, bind to a random open port.
 /**
  * @brief Bind to a specified port.
  *
@@ -278,7 +276,7 @@ void *hey_listen(void *cmid){
 }
 
 /**
- * @brief The funtion for the agent threads.
+ * @brief The function for the agent threads.
  *
  * Handles a single client connection
  * @return @c NULL
@@ -313,19 +311,19 @@ void *secret_agent(void *id){
 		if(opcode == DISCONNECT){
 			fprintf(log_p, "Client issued a disconnect.\n");
 			rdma_send_op(cm_id, 0, log_p);
+			get_completion(cm_id, SEND, 1, log_p);
 			break;
 		} else if (opcode == OPEN_MR){
+			remote_add(pthread_self());
 			set_status(pthread_self(), OPEN);
 		} else if (opcode == CLOSE_MR){
+			remote_remove(pthread_self());
 			set_status(pthread_self(), CLOSED);
-		} else if (opcode == REQUEST_MR){
-			send_open_clients(cm_id);
-		} else if (opcode == REQUEST_PAGE){
-			
-		}
+		} 
 	}
 	// Disconnect and remove client from lists
 	remove_thread(pthread_self());
+	remote_remove(pthread_self());
 	remove_client(pthread_self());
 	obliterate(NULL, cm_id, mr, cm_id->channel, log_p);
 	return 0;
@@ -462,39 +460,79 @@ void set_status(pthread_t id, enum client_status status){
 }
 
 /**
- * @brief Send a list of all open memory regions to the specified client.
+ * @brief Inform all clients when another client's memory region closes(but only if it was previously open).
  *
  * @return @c NULL
- * @param id the id associated with the connection to the client that requested the list
+ * @param id the thread ID of the client that closed their memory region
  */
-void send_open_clients(struct rdma_cm_id *id){
-	struct ibv_send_wr wr, *bad;
-	struct ibv_sge sge;
-	struct client client_data;
+void remote_remove(pthread_t id){
 	struct cnode *node = clist_head;
-	wr.next = NULL;
-	wr.sg_list = &sge;
-	wr.num_sge = 1;
-	wr.opcode = IBV_WR_SEND_WITH_IMM;
-	wr.send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE;
-	wr.imm_data = htonl(REQUEST_MR);
-	sge.addr = (uint64_t)&client_data;
-	sge.length = sizeof(struct client);
+	struct cnode *client;
 	sem_wait(&clist_sem);
 	while(node != NULL){
-		if(node->id == id){
-			node = node->next;
-			continue;
-		} else if(node->status == OPEN){
-			client_data.rkey = node->rkey;
-			client_data.remote_addr = node->remote_addr;
-			client_data.cid = node->cid;
-			client_data.length = node->length;
-			if(rdma_seterrno(ibv_post_send(id->qp, &wr, &bad)))
-				stop_it("ibv_post_send()", errno, log_p);
+		if(node->tid == id){
+			client = node;
+			break;
 		}
 		node = node->next;
 	}
-	rdma_send_op(id, SEMA_POST, log_p);
+	if (client->status == CLOSED){
+		sem_post(&clist_sem);
+		return;
+	}
+	node = clist_head;
+	while(node != NULL){
+		if(node->tid == id){
+			node = node->next;
+			continue;
+		} else {
+			rdma_send_op(node->id, REMOVE_CLIENT, log_p);
+			get_completion(node->id, SEND, 1, log_p);
+			rdma_send_op(node->id, client->cid, log_p);
+			get_completion(node->id, SEND, 1, log_p);
+		}
+		node = node->next;
+	}
+	sem_post(&clist_sem);
+}
+/**
+ * @brief Inform all clients when another client's memory region opens.
+ *
+ * @return @c NULL
+ * @param id the thread ID of the client that opened their memory region
+ */
+void remote_add(pthread_t id){
+	struct cnode *node = clist_head;
+	struct cnode *client;
+	struct client client_data;
+	sem_wait(&clist_sem);
+	while(node != NULL){
+		if(node->tid == id){
+			client = node;
+			break;
+		}
+		node = node->next;
+	}
+	if (client->status == OPEN){
+		sem_post(&clist_sem);
+		return;
+	}
+	node = clist_head;
+	while(node != NULL){
+		if(node->tid == id){
+			node = node->next;
+			continue;
+		} else {
+			client_data.rkey = client->rkey;
+			client_data.remote_addr = client->remote_addr;
+			client_data.cid = client->cid;
+			client_data.length = client->length;
+			rdma_send_op(node->id, ADD_CLIENT, log_p);
+			get_completion(node->id, SEND, 1, log_p);
+			rdma_post_send(node->id," ", &client_data, sizeof(client_data), 0, IBV_SEND_INLINE | IBV_SEND_SIGNALED);
+			get_completion(node->id, SEND, 1, log_p);
+		}
+		node = node->next;
+	}
 	sem_post(&clist_sem);
 }

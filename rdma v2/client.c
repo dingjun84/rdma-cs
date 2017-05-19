@@ -6,19 +6,6 @@
  * @author Austin Pohlmann 
  */
 #include "rdma_cs.h"
-
-/**
- * @brief Structure used to pass information to the listening thread.
- */
-struct listen_info {
-	struct ibv_mr *mr; 		/**< This client's memory region */
-	struct rdma_cm_id *id;	/**< This client's id */
-};
-
-/**
- * @brief Semaphore to synchronize with the server
- */
-sem_t servercom;
 /**
  * @brief The head of the list containing information on all open memory regions on the server
  */
@@ -27,24 +14,38 @@ struct client *clist_head=NULL;
  * @brief The current number of open memory regions
  */
 unsigned long clients = 0;
-
-/*
-// Speed testing
-struct timeval te; // get current time
-long long time_one, time_two; // caculate milliseconds
-
-long long getTime(){
-	gettimeofday(&te, NULL); 
-	return te.tv_sec*1000LL + te.tv_usec/1000;
-}
-*/
+/**
+ * @brief The first menu (operations on this client's remote memory region)
+ */
+char *menu1 = "----------------------\n"
+			"| RDMA client        |\n"
+			"----------------------\n"
+			"1) Disconnect        |\n"
+			"2) Write inline      |\n"
+			"3) Write             |\n"
+			"4) Read              |\n"
+			"5) Open Server MR    |\n"
+			"6) Close server MR   |\n";
+/**
+ * @brief The second menu (operations on other clients' remote memory regions)
+ */
+char *menu2 = "----------------------\n"
+			"| RDMA client(page 2)|\n"
+			"----------------------\n"
+			"1) Write inline      |\n"
+			"2) Write             |\n"
+			"3) Read              |\n"
+			"4) Go back           |\n";
+/**
+ * @brief Allows the communication thread to know if the main thread is in the menu (for re-printing the menu, if necessary)
+ */
+unsigned char in_menu;
 
 void connect_four(struct rdma_cm_id *, struct rdma_event_channel *, char *, short int);
 void *server_com(void *);
 void add_client(struct client);
 void remove_client(unsigned long);
 struct client *get_client();
-int contains(int);
 
 int main(int argc, char **argv){
 	// Get server address and port from arguments
@@ -54,7 +55,6 @@ int main(int argc, char **argv){
 	}
 	char *ip = argv[1];
 	short port = atoi(argv[2]);
-	sem_init(&servercom, 0, 0);
 	// Create the event channel
 	struct rdma_event_channel *event_channel = rdma_create_event_channel();
 	if(event_channel == NULL)
@@ -78,7 +78,7 @@ int main(int argc, char **argv){
 	// Create a file pointer for file output later
 	FILE *output_file;
 	char filename[50];
-	// The real good
+	// Create some variables that are needed later
 	void *buffer = malloc(MAX_INLINE_DATA);
 	uint8_t opcode;
 	unsigned long long length;
@@ -90,32 +90,23 @@ int main(int argc, char **argv){
 	info.mr = mr;
 	info.id = cm_id;
 	pthread_t listen_thread;
-	if(pthread_create(&listen_thread, NULL, server_com, &info)){
+	if(pthread_create(&listen_thread, NULL, server_com, cm_id)){
 		stop_it("pthread_create()", errno, stderr);
 	}
 	struct client* remote_id;
+	// The real good (RDMA operations!!!)
 	while(1){
+		// Print a menu and take user input
 		page1:
-		printf("----------------------\n"
-			"| RDMA client        |\n"
-			"----------------------\n"
-			"1) Disconnect        |\n"
-			"2) Write inline      |\n"
-			"3) Write             |\n"
-			"4) Read              |\n"
-			"5) Open Server MR    |\n"
-			"6) Close server MR   |\n"
-			"7) View open MRs     |\n"
-			"8) Request another MR|\n");
+		in_menu = 1;
+		printf("%s", menu1);
 		if(clients)
-			printf("9) Page 2            |\n");
+			printf("7) Page 2            |\n");
 		printf("> ");
 		scanf("%c",&opcode);
 		opcode = opcode%48;
 		fgetc(stdin);
-		//opcode = fgetc(stdin)%48;
-		//while(fgetc(stdin) != '\n')
-		//	fgetc(stdin);
+		in_menu = 0;
 		if(opcode == DISCONNECT){
 			// Send disconnect signal to server
 			rdma_send_op(cm_id, opcode, stdout);
@@ -169,16 +160,7 @@ int main(int argc, char **argv){
 		} else if(opcode == CLOSE_MR){
 			rdma_send_op(cm_id, opcode, stdout);
 			get_completion(cm_id, SEND, 0, stdout);
-		} else if(opcode == REQUEST_MR){
-			//time_one = getTime();
-			rdma_send_op(cm_id, opcode, stdout);
-			get_completion(cm_id, SEND, 0, stdout);
-			sem_wait(&servercom);
-			//time_two = getTime();
-			//printf("%lldms\n", time_two-time_one);
-		} else if(opcode == REQUEST_PAGE){
-
-		} else if(opcode == READ){
+		}  else if(opcode == READ){
 			// RDMA read
 			printf("Would you like to print the data to console or write to a file? (p for print, w for write)\n> ");
 			scanf("%c", &opcode);
@@ -210,7 +192,8 @@ int main(int argc, char **argv){
 			for(i=0;i<length;i++)
 				fprintf(output_file, "%02x ", byte[i]);
 			printf("\n");
-		} else if(opcode == 9 && clients) {
+		} else if(opcode == 7 && clients) {
+			// Go to the second page IFF there are other memory regions open
 			goto page2;
 		} else {
 			printf("Unknown operation, try again buddy.\n");
@@ -219,19 +202,20 @@ int main(int argc, char **argv){
 	}
 	goto disconnect;
 	while(1){
+		// Print menu and take use input
 		page2:
-		printf("----------------------\n"
-			"| RDMA client(page 2)|\n"
-			"----------------------\n"
-			"1) Write inline      |\n"
-			"2) Write             |\n"
-			"3) Read              |\n"
-			"4) Go back           |\n"
-			"> ");
+		printf("%s> ", menu2);
 		scanf("%c",&opcode);
 		opcode = opcode%48;
 		fgetc(stdin);
-		if(opcode == 1){
+		if(opcode == 4){
+			// Go back to the first page
+			goto page1;
+		} else if (!clients){
+			// If all open regions are closed, don't allow for any of the following operations!
+			printf("Error: no other memory regions to operate on! Returning to the main menu...\n");
+			goto page1;
+		} else if(opcode == 1){
 			remote_id = get_client();
 			// RDMA write inline
 			printf("Server memory region is %u bytes long. "
@@ -308,8 +292,6 @@ int main(int argc, char **argv){
 			for(i=0;i<length;i++)
 				fprintf(output_file, "%02x ", byte[i]);
 			printf("\n");
-		} else if(opcode == 4){
-			goto page1;
 		} else {
 			printf("Unknown operation, try again buddy.\n");
 		}
@@ -378,32 +360,48 @@ void connect_four(struct rdma_cm_id *cm_id, struct rdma_event_channel *ec, char 
  * @param info a @c struct @c listen_info object with the needed information
  */
 void *server_com(void *info){
-	struct listen_info *linfo = info;
-	struct rdma_cm_id *cm_id = linfo->id;
-	struct ibv_mr *mr = linfo->mr;
+	//struct listen_info *linfo = info;
+	struct rdma_cm_id *cm_id = info;
 	int opcode;
 	struct client *client_data;
+	void *buffer = malloc(200);
+	memset(buffer, 0, 200);
+	struct ibv_mr *mr = ibv_reg_mr(cm_id->qp->pd, buffer, 200,
+	 IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
 	while(1){
 		// Wait for signal from the server
-		rdma_recv(cm_id, mr, stdout);
+		rdma_post_recv(cm_id, " ", buffer, 200, mr);
 		opcode = get_completion(cm_id, RECV, 0, stderr);
 		if(opcode == DISCONNECT){
 			// Send a disconnect signal to the server
 			fprintf(stdout, "\nServer issued a disconnect request.\n");
 			rdma_send_op(cm_id, opcode, stdout);
-			get_completion(cm_id, SEND, 0, stdout);
+			get_completion(cm_id, SEND, 0, stderr);
 			break;
 		} else if (opcode == 0){
 			return NULL;
-		} else if (opcode == REQUEST_MR){
-			client_data = mr->addr;
-			if(contains(client_data->cid))
-				continue;
+		} else if (opcode == ADD_CLIENT){
+			// A memory region has opened up and will be added to the local list
+			rdma_post_recv(cm_id, " ", buffer, 200, mr);
+			get_completion(cm_id, RECV, 0, stderr);
+			client_data = buffer;
 			add_client(*client_data);
-			printf("Id: %lu \n\tMR size: %lu\n\tRemote address: 0x%0llx\n\tRkey: 0x%0x\n", client_data->cid, (unsigned long)client_data->length,
-				(long long)client_data->remote_addr, (unsigned int)client_data->rkey);
-		} else if (opcode == SEMA_POST){
-			sem_post(&servercom);
+			printf("\nA remote memory region has opened.\n");
+			if(in_menu){
+				printf("%s", menu1);
+				if(clients)
+					printf("7) Page 2            |\n");
+			}
+		} else if (opcode == REMOVE_CLIENT){
+			// A memory region has closed and will be removed from the local list
+			rdma_post_recv(cm_id, " ", buffer, 100, mr);
+			remove_client(get_completion(cm_id, RECV, 0, stderr));
+			printf("\nA remote memory region has closed.\n");
+			if(in_menu){
+				printf("%s", menu1);
+				if(clients)
+					printf("7) Page 2            |\n");
+			}
 		}
 	}
 	obliterate(cm_id, NULL, mr, cm_id->channel, stdout);
@@ -494,20 +492,4 @@ struct client *get_client(){
 	}
 	printf("Client not found.\n");
 	return NULL;
-}
-
-/**
- * @brief Check if the list of memory regions contains a certain id number
- *
- * @return 1 for @c true, 0 for @c false
- * @param id the client id number of the memory region to search for
- */
-int contains(int id){
-	struct client* node = clist_head;
-	while(node){
-		if(node->cid == id)
-			return 1;
-		node = node->next;
-	}
-	return 0;
 }
