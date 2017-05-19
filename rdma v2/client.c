@@ -86,9 +86,6 @@ int main(int argc, char **argv){
 	int i;
 	unsigned char *byte;
 	// Make the listener thread before the real good starts
-	struct listen_info info;
-	info.mr = mr;
-	info.id = cm_id;
 	pthread_t listen_thread;
 	if(pthread_create(&listen_thread, NULL, server_com, cm_id)){
 		stop_it("pthread_create()", errno, stderr);
