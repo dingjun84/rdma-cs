@@ -9,10 +9,10 @@ EXTRA_LIBS = -lrdmacm -lpthread
 all: $(ALL)
 
 client: rdma_cs.c client.c 
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS)
+	$(CC) -g -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS)
 
 server: rdma_cs.c server.c
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS) 
+	$(CC) -g -o $@ $^ $(CFLAGS) $(LIBS) $(EXTRA_LIBS) 
 
 backup: 
 	cp --backup=t server.c server.c.backup
